@@ -274,14 +274,55 @@
             };
 
             const openModal = (staffNameToEdit = null) => {
-                modalLocationsDiv.innerHTML = '';
-                locationNames.forEach(loc => { modalLocationsDiv.innerHTML += `<label class="flex items-center p-1 rounded-md hover:bg-gray-100"><input type="checkbox" value="${loc}" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"><span class="ml-2 text-sm text-gray-600">${loc}</span></label>`; });
+                // HTML構造を一度に生成
+                let locationCheckboxesHTML = locationNames.map(loc => `
+                    <label class="flex items-center p-1 rounded-md hover:bg-gray-100 cursor-pointer">
+                        <input type="checkbox" value="${loc}" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 location-checkbox">
+                        <span class="ml-2 text-sm text-gray-600">${loc}</span>
+                    </label>
+                `).join('');
+
+                modalLocationsDiv.innerHTML = `
+                    <label class="flex items-center p-2 rounded-md hover:bg-gray-100 font-semibold border-b mb-2 cursor-pointer">
+                        <input type="checkbox" id="modal-select-all-locations" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                        <span class="ml-2 text-sm text-gray-800">全て選択 / 解除</span>
+                    </label>
+                    ${locationCheckboxesHTML}
+                `;
+                
+                // DOM要素を取得
+                const selectAllCheckbox = document.getElementById('modal-select-all-locations');
+                const locationCheckboxes = modalLocationsDiv.querySelectorAll('.location-checkbox');
+
+                // 「全て選択」チェックボックスのイベントリスナー
+                selectAllCheckbox.addEventListener('change', (e) => {
+                    locationCheckboxes.forEach(cb => {
+                        cb.checked = e.target.checked;
+                    });
+                });
+
+                // 個別チェックボックスのイベントリスナー
+                locationCheckboxes.forEach(cb => {
+                    cb.addEventListener('change', () => {
+                        const allChecked = Array.from(locationCheckboxes).every(c => c.checked);
+                        selectAllCheckbox.checked = allChecked;
+                    });
+                });
+
+                // モーダルのタイトルと入力値を設定
                 if (staffNameToEdit) {
                     const staff = masterStaff.find(s => s.name === staffNameToEdit);
                     modalTitle.textContent = 'メンバー編集';
                     modalStaffNameInput.value = staff.name;
                     modalOriginalStaffNameInput.value = staff.name;
-                    staff.locations.forEach(loc => { const checkbox = modalLocationsDiv.querySelector(`input[value="${loc}"]`); if(checkbox) checkbox.checked = true; });
+                    // 既存メンバーの勤務地をチェック
+                    staff.locations.forEach(loc => { 
+                        const checkbox = modalLocationsDiv.querySelector(`input[value="${loc}"]`); 
+                        if(checkbox) checkbox.checked = true; 
+                    });
+                    // 勤務地設定後、「全て選択」の状態を更新
+                    const allChecked = Array.from(locationCheckboxes).every(c => c.checked);
+                    selectAllCheckbox.checked = allChecked;
                 } else {
                     modalTitle.textContent = '新規メンバーを追加';
                     modalStaffNameInput.value = '';
@@ -289,13 +330,14 @@
                 }
                 editModal.style.display = 'flex';
             };
+
             const closeModal = () => { editModal.style.display = 'none'; };
             const saveStaff = () => {
                 const newName = modalStaffNameInput.value.trim();
                 const originalName = modalOriginalStaffNameInput.value;
                 if (!newName) { showMessage('名前を入力してください。'); return; }
                 if (newName !== originalName && masterStaff.some(s => s.name === newName)) { showMessage('その名前は既に使用されています。'); return; }
-                const selectedLocations = Array.from(modalLocationsDiv.querySelectorAll('input:checked')).map(cb => cb.value);
+                const selectedLocations = Array.from(modalLocationsDiv.querySelectorAll('.location-checkbox:checked')).map(cb => cb.value);
                 if (originalName) {
                     const staff = masterStaff.find(s => s.name === originalName);
                     staff.name = newName;
@@ -617,9 +659,9 @@
                                 // 研修生ではない場合のみ、定員チェックを行う
                                 if (toType === 'location' && !isTrainee) {
                                     const capacity = prioritySlots.filter(slot => slot === toLocation).length;
-                                    const currentAssignments = (weeklyAssignments[date][toLocation] || []);
-                                    // 注意：移動元のリストからはまだ削除されていないので、移動先リストの現在の人数で比較する
-                                    if (currentAssignments.length >= capacity) {
+                                    // 研修生を除いた現在の配置人数をカウント
+                                    const currentRegularAssignments = (weeklyAssignments[date][toLocation] || []).filter(s => !s.trainee);
+                                    if (currentRegularAssignments.length >= capacity) {
                                         showMessage(`「${toLocation}」は定員(${capacity}名)です。研修生としてのみ追加できます。`, true);
                                         // 移動をキャンセルして元のリストに戻す
                                         fromList.appendChild(evt.item);
@@ -638,7 +680,6 @@
                                 weeklyAssignments[date][toLocation].splice(evt.newIndex, 0, { name: itemName, trainee: isTrainee });
 
                                 // --- UIをデータモデルに基づいて再描画 ---
-                                // これにより、DOMの状態とデータの状態が常に一致する
                                 displayWeeklyResults();
                             }
                         });
