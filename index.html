@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>勤務地自動割り振りアプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- スマホでのドラッグ&ドロップを可能にするライブラリを追加 -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@latest/Sortable.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .location-card {
+            min-height: 120px;
+        }
+        .modal-backdrop {
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+        .tab-btn {
+            transition: all 0.2s ease-in-out;
+            padding: 0.5rem 0.25rem; /* スマホ用に少し余白を調整 */
+        }
+        .tab-btn.active {
+            background-color: #4f46e5;
+            color: white;
+            font-weight: 600;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        /* Radio button styling */
+        .status-radio-group input[type="radio"] {
+            display: none;
+        }
+        .status-radio-group label {
+            cursor: pointer;
+            padding: 0.5rem 1rem; /* スマホ用にタップしやすく */
+            border-radius: 9999px;
+            border: 1px solid #d1d5db;
+            font-size: 0.875rem;
+            transition: all 0.2s ease;
+        }
+        .status-radio-group input[type="radio"]:checked + label {
+            color: white;
+        }
+        .status-radio-group input[value="present"]:checked + label {
+            background-color: #22c55e; /* green-500 */
+            border-color: #16a34a; /* green-600 */
+        }
+        .status-radio-group input[value="absent"]:checked + label {
+            background-color: #f97316; /* orange-500 */
+            border-color: #ea580c; /* orange-600 */
+        }
+        /* Drag & Drop styling */
+        .draggable-item {
+            cursor: grab;
+            user-select: none;
+        }
+        .draggable-item.sortable-ghost { /* SortableJS用のゴーストクラス */
+            opacity: 0.5;
+            background-color: #eef2ff; /* indigo-100 */
+        }
+        .drop-zone.drag-over-zone {
+            outline: 2px dashed #4f46e5;
+            background-color: #eef2ff;
+        }
+        /* スマホ表示の際に「割り振り実行」ボタンを画面下に固定 */
+        @media (max-width: 1023px) {
+            #assign-btn-container {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                padding: 1rem;
+                background-color: rgba(255, 255, 255, 0.9);
+                backdrop-filter: blur(5px);
+                border-top: 1px solid #e5e7eb;
+                z-index: 40;
+            }
+            /* ボタンで隠れるコンテンツ分の余白を確保 */
+            .main-container {
+                padding-bottom: 100px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div class="container mx-auto p-4 md:p-8 main-container">
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900">週間 勤務地自動割り振りアプリ</h1>
+            <p class="text-gray-600 mt-2">1週間分の勤務地を偏りなく自動で割り振ります。</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- 設定セクション -->
+            <div class="lg:col-span-1 bg-white p-6 rounded-xl shadow-lg h-fit space-y-8">
+                <div>
+                    <h2 class="text-2xl font-semibold mb-2 border-b pb-3">1. メンバー管理</h2>
+                    <p class="text-xs text-gray-400 mb-3">メンバー情報はブラウザに保存されます。ドラッグで並び替え可能です。</p>
+                    <div id="master-staff-list" class="space-y-1 mb-3 max-h-48 overflow-y-auto"></div>
+                    <button id="add-new-staff-btn" class="w-full bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors shadow">新規メンバーを追加</button>
+                </div>
+                
+                <div>
+                    <div class="flex justify-between items-center border-b pb-3 mb-3">
+                        <h2 class="text-2xl font-semibold">2. 配置の優先順位</h2>
+                        <button id="toggle-priority-btn" class="text-sm text-indigo-600 hover:text-indigo-800 font-semibold">編集</button>
+                    </div>
+                    <div id="priority-section-content" class="hidden">
+                        <p class="text-xs text-gray-400 mb-3">ドラッグで優先順位を入れ替えられます。</p>
+                        <div class="flex space-x-2 mb-3">
+                            <select id="priority-location-select" class="flex-grow w-full px-3 py-2 border border-gray-300 rounded-lg bg-white"></select>
+                            <button id="add-priority-btn" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">追加</button>
+                        </div>
+                        <div id="priority-list" class="space-y-1 mb-3 max-h-48 overflow-y-auto"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <h2 class="text-2xl font-semibold mb-4 border-b pb-3">3. 週間スケジュール設定</h2>
+                    <div class="mb-4">
+                        <label for="week-start-date" class="block text-sm font-medium text-gray-700 mb-1">週の開始日 (月曜日) を選択</label>
+                        <input type="date" id="week-start-date" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                    </div>
+                    <div id="day-tabs" class="flex border-b mb-4"></div>
+                    <div id="attendance-selector-container"></div>
+                </div>
+                
+                <!-- ボタンをコンテナで囲む -->
+                <div id="assign-btn-container">
+                    <button id="assign-btn" class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition-colors shadow-lg font-semibold text-lg">割り振り実行</button>
+                </div>
+            </div>
+
+            <!-- 結果表示セクション -->
+            <div class="lg:col-span-2 space-y-6">
+                <div class="bg-white p-6 rounded-xl shadow-lg">
+                    <div class="flex justify-between items-center border-b pb-3">
+                        <h2 class="text-2xl font-semibold">割り振り結果</h2>
+                        <button id="clear-btn" class="bg-gray-500 text-white py-2 px-4 rounded-lg hover:bg-gray-600 shadow-md font-semibold hidden">クリア</button>
+                    </div>
+                     <p class="text-xs text-gray-500 mt-2">割り振り後、担当者名をドラッグして手動で調整できます。</p>
+                </div>
+                <div id="result-container" class="space-y-8">
+                     <p id="result-placeholder" class="text-gray-500 text-center py-8 bg-white rounded-xl shadow-lg">左のパネルでスケジュールを設定し、「割り振り実行」ボタンを押してください。</p>
+                </div>
+            </div>
+        </div>
+        
+        <div id="message-box" class="fixed top-5 right-5 bg-red-500 text-white px-6 py-3 rounded-lg shadow-xl transition-transform translate-x-[120%] z-50"></div>
+    </div>
+
+    <!-- メンバー編集モーダル -->
+    <div id="edit-modal" class="fixed inset-0 z-50 items-center justify-center hidden"><div class="modal-backdrop fixed inset-0"></div><div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md m-4 z-10"><h2 id="modal-title" class="text-2xl font-bold mb-4"></h2><div class="space-y-4"><div><label for="modal-staff-name" class="block text-sm font-medium text-gray-700">名前</label><input type="text" id="modal-staff-name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"><input type="hidden" id="modal-original-staff-name"></div><div><label class="block text-sm font-medium text-gray-700">勤務可能な場所</label><div id="modal-locations" class="mt-2 grid grid-cols-2 gap-2 border p-3 rounded-md max-h-48 overflow-y-auto"></div></div></div><div class="mt-6 flex justify-end space-x-3"><button id="modal-cancel-btn" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300">キャンセル</button><button id="modal-save-btn" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">保存</button></div></div></div>
+    
+    <!-- 研修生確認モーダル -->
+    <div id="trainee-modal" class="fixed inset-0 z-50 items-center justify-center hidden"><div class="modal-backdrop fixed inset-0"></div><div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md m-4 z-10"><h2 id="trainee-modal-title" class="text-2xl font-bold mb-4">配置の確認</h2><p id="trainee-modal-message" class="text-gray-700"></p><div class="mt-6 flex justify-end space-x-3"><button id="trainee-modal-no-btn" class="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300">いいえ</button><button id="trainee-modal-yes-btn" class="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600">はい</button></div></div></div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM要素の取得 ---
+            const addNewStaffBtn = document.getElementById('add-new-staff-btn');
+            const masterStaffListDiv = document.getElementById('master-staff-list');
+            const togglePriorityBtn = document.getElementById('toggle-priority-btn');
+            const prioritySectionContent = document.getElementById('priority-section-content');
+            const priorityListDiv = document.getElementById('priority-list');
+            const priorityLocationSelect = document.getElementById('priority-location-select');
+            const addPriorityBtn = document.getElementById('add-priority-btn');
+            const weekStartDateInput = document.getElementById('week-start-date');
+            const dayTabsContainer = document.getElementById('day-tabs');
+            const attendanceSelectorContainer = document.getElementById('attendance-selector-container');
+            const assignBtn = document.getElementById('assign-btn');
+            const clearBtn = document.getElementById('clear-btn');
+            const resultContainer = document.getElementById('result-container');
+            const resultPlaceholder = document.getElementById('result-placeholder');
+            const messageBox = document.getElementById('message-box');
+            const editModal = document.getElementById('edit-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalStaffNameInput = document.getElementById('modal-staff-name');
+            const modalOriginalStaffNameInput = document.getElementById('modal-original-staff-name');
+            const modalLocationsDiv = document.getElementById('modal-locations');
+            const modalSaveBtn = document.getElementById('modal-save-btn');
+            const modalCancelBtn = document.getElementById('modal-cancel-btn');
+            const traineeModal = document.getElementById('trainee-modal');
+
+            // --- アプリケーションの状態管理 ---
+            const STAFF_STORAGE_KEY = 'shift-app-master-staff';
+            const PRIORITY_STORAGE_KEY = 'shift-app-priority-slots';
+            const locationNames = ['三国', '庄内', '曽根', '岡町', '豊中', '蛍池', '石橋'];
+            let masterStaff = []; 
+            let prioritySlots = [];
+            let weeklyAssignments = {};
+            let weeklyAttendance = {};
+            const locationDisplayOrder = ['三国', '庄内', '曽根', '岡町', '豊中', '蛍池', '石橋'];
+            let weekDates = [];
+
+            // --- データ保存/読み込み関数 ---
+            const saveToStorage = (key, data) => {
+                try {
+                    localStorage.setItem(key, JSON.stringify(data));
+                } catch (e) {
+                    console.error("Failed to save to localStorage", e);
+                    showMessage("データの保存に失敗しました。");
+                }
+            };
+            const loadFromStorage = (key, defaultValue) => {
+                const storedData = localStorage.getItem(key);
+                if (storedData) {
+                    try {
+                        return JSON.parse(storedData);
+                    } catch (e) {
+                        console.error("Failed to parse data from localStorage for key:", key, e);
+                        return defaultValue;
+                    }
+                }
+                return defaultValue;
+            };
+
+            // --- 初期化処理 ---
+            const init = () => {
+                masterStaff = loadFromStorage(STAFF_STORAGE_KEY, [{ name: '田中', locations: ['三国', '庄内', '曽根', '岡町', '豊中', '蛍池', '石橋'] },{ name: '佐藤', locations: ['三国', '岡町', '豊中'] },{ name: '鈴木', locations: ['庄内', '曽根', '蛍池', '石橋'] }]);
+                prioritySlots = loadFromStorage(PRIORITY_STORAGE_KEY, ['三国', '石橋', '蛍池', '曽根', '庄内', '岡町', '岡町', '豊中', '三国']);
+                
+                locationNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = name;
+                    priorityLocationSelect.appendChild(option);
+                });
+
+                setDefaultDate();
+                updateViews();
+                initializeSortableLists(); // SortableJSの初期化
+                
+                addNewStaffBtn.addEventListener('click', () => openModal());
+                togglePriorityBtn.addEventListener('click', () => {
+                    prioritySectionContent.classList.toggle('hidden');
+                    togglePriorityBtn.textContent = prioritySectionContent.classList.contains('hidden') ? '編集' : '閉じる';
+                });
+                addPriorityBtn.addEventListener('click', addPrioritySlot);
+                weekStartDateInput.addEventListener('change', generateDayTabsAndSelectors);
+                assignBtn.addEventListener('click', assignWeekLocations);
+                clearBtn.addEventListener('click', clearResults);
+                modalSaveBtn.addEventListener('click', saveStaff);
+                modalCancelBtn.addEventListener('click', closeModal);
+                editModal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+            };
+
+            const setDefaultDate = () => {
+                const today = new Date();
+                const day = today.getDay();
+                const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(today.setDate(diff));
+                weekStartDateInput.value = monday.toISOString().split('T')[0];
+            };
+
+            const showMessage = (message, isError = true) => {
+                messageBox.textContent = message;
+                messageBox.style.backgroundColor = isError ? '#ef4444' : '#22c55e';
+                messageBox.style.transform = 'translateX(0)';
+                setTimeout(() => { messageBox.style.transform = 'translateX(120%)'; }, 3000);
+            };
+            
+            const updateViews = () => {
+                updateMasterStaffListView();
+                updatePriorityListView();
+                generateDayTabsAndSelectors();
+            };
+
+            const openModal = (staffNameToEdit = null) => {
+                modalLocationsDiv.innerHTML = '';
+                locationNames.forEach(loc => { modalLocationsDiv.innerHTML += `<label class="flex items-center p-1 rounded-md hover:bg-gray-100"><input type="checkbox" value="${loc}" class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"><span class="ml-2 text-sm text-gray-600">${loc}</span></label>`; });
+                if (staffNameToEdit) {
+                    const staff = masterStaff.find(s => s.name === staffNameToEdit);
+                    modalTitle.textContent = 'メンバー編集';
+                    modalStaffNameInput.value = staff.name;
+                    modalOriginalStaffNameInput.value = staff.name;
+                    staff.locations.forEach(loc => { const checkbox = modalLocationsDiv.querySelector(`input[value="${loc}"]`); if(checkbox) checkbox.checked = true; });
+                } else {
+                    modalTitle.textContent = '新規メンバーを追加';
+                    modalStaffNameInput.value = '';
+                    modalOriginalStaffNameInput.value = '';
+                }
+                editModal.style.display = 'flex';
+            };
+            const closeModal = () => { editModal.style.display = 'none'; };
+            const saveStaff = () => {
+                const newName = modalStaffNameInput.value.trim();
+                const originalName = modalOriginalStaffNameInput.value;
+                if (!newName) { showMessage('名前を入力してください。'); return; }
+                if (newName !== originalName && masterStaff.some(s => s.name === newName)) { showMessage('その名前は既に使用されています。'); return; }
+                const selectedLocations = Array.from(modalLocationsDiv.querySelectorAll('input:checked')).map(cb => cb.value);
+                if (originalName) {
+                    const staff = masterStaff.find(s => s.name === originalName);
+                    staff.name = newName;
+                    staff.locations = selectedLocations;
+                } else {
+                    masterStaff.push({ name: newName, locations: selectedLocations });
+                }
+                saveToStorage(STAFF_STORAGE_KEY, masterStaff);
+                updateViews();
+                closeModal();
+                showMessage('メンバー情報を保存しました。', false);
+            };
+
+            const removeMasterStaff = (nameToRemove) => {
+                masterStaff = masterStaff.filter(s => s.name !== nameToRemove);
+                saveToStorage(STAFF_STORAGE_KEY, masterStaff);
+                updateViews();
+            };
+            
+            const updateMasterStaffListView = () => {
+                masterStaffListDiv.innerHTML = '';
+                if (masterStaff.length === 0) { masterStaffListDiv.innerHTML = '<p class="text-gray-400 text-sm">メンバーがいません。</p>'; }
+                else {
+                    masterStaff.forEach(staff => {
+                        const staffEl = document.createElement('div');
+                        staffEl.className = 'draggable-item flex items-center justify-between bg-gray-100 p-2 rounded-lg';
+                        staffEl.dataset.name = staff.name; // SortableJSが参照するID
+                        staffEl.innerHTML = `<div class="flex-grow pointer-events-none"><span class="text-gray-800 font-medium">${staff.name}</span><span class="text-xs text-gray-500 ml-2">(${staff.locations.length}ヶ所)</span></div><div><button data-name="${staff.name}" class="edit-btn text-blue-600 hover:text-blue-800 mr-2">編集</button><button data-name="${staff.name}" class="remove-btn text-red-500 hover:text-red-700 font-bold">&times;</button></div>`;
+                        masterStaffListDiv.appendChild(staffEl);
+                    });
+                    masterStaffListDiv.querySelectorAll('.edit-btn').forEach(btn => btn.addEventListener('click', (e) => openModal(e.target.dataset.name)));
+                    masterStaffListDiv.querySelectorAll('.remove-btn').forEach(btn => btn.addEventListener('click', (e) => removeMasterStaff(e.target.dataset.name)));
+                }
+            };
+
+            const addPrioritySlot = () => {
+                const location = priorityLocationSelect.value;
+                prioritySlots.push(location);
+                saveToStorage(PRIORITY_STORAGE_KEY, prioritySlots);
+                updatePriorityListView();
+            };
+
+            const removePrioritySlot = (index) => {
+                prioritySlots.splice(index, 1);
+                saveToStorage(PRIORITY_STORAGE_KEY, prioritySlots);
+                updatePriorityListView();
+            };
+
+            const updatePriorityListView = () => {
+                priorityListDiv.innerHTML = '';
+                const locationCounts = {};
+                prioritySlots.forEach((slot, index) => {
+                    locationCounts[slot] = (locationCounts[slot] || 0) + 1;
+                    const count = locationCounts[slot];
+                    const displayText = count > 1 ? `${slot} (${count}人目)` : slot;
+
+                    const slotEl = document.createElement('div');
+                    slotEl.className = 'draggable-item flex items-center justify-between bg-gray-100 p-2 rounded-lg';
+                    slotEl.dataset.id = index; // SortableJSが参照するID
+                    slotEl.innerHTML = `
+                        <span class="text-gray-800 font-medium pointer-events-none">${index + 1}. ${displayText}</span>
+                        <button data-index="${index}" class="remove-priority-btn text-red-500 hover:text-red-700 font-bold">&times;</button>
+                    `;
+                    priorityListDiv.appendChild(slotEl);
+                });
+                priorityListDiv.querySelectorAll('.remove-priority-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => removePrioritySlot(parseInt(e.target.dataset.index, 10)));
+                });
+            };
+            
+            // --- SortableJSを使ったドラッグ＆ドロップ処理 ---
+            const initializeSortableLists = () => {
+                // メンバー管理リストの並び替え
+                new Sortable(masterStaffListDiv, {
+                    animation: 150,
+                    onEnd: (evt) => {
+                        const [movedItem] = masterStaff.splice(evt.oldIndex, 1);
+                        masterStaff.splice(evt.newIndex, 0, movedItem);
+                        saveToStorage(STAFF_STORAGE_KEY, masterStaff);
+                        updateViews();
+                    }
+                });
+
+                // 優先順位リストの並び替え
+                new Sortable(priorityListDiv, {
+                    animation: 150,
+                    onEnd: (evt) => {
+                        const [movedItem] = prioritySlots.splice(evt.oldIndex, 1);
+                        prioritySlots.splice(evt.newIndex, 0, movedItem);
+                        saveToStorage(PRIORITY_STORAGE_KEY, prioritySlots);
+                        updatePriorityListView();
+                    }
+                });
+            };
+
+            const generateDayTabsAndSelectors = () => {
+                const startDate = new Date(weekStartDateInput.value);
+                if (isNaN(startDate.getTime())) return;
+                
+                weekDates = [];
+                dayTabsContainer.innerHTML = '';
+                attendanceSelectorContainer.innerHTML = '';
+                const days = ['月', '火', '水', '木', '金'];
+
+                for (let i = 0; i < 5; i++) {
+                    const currentDate = new Date(startDate);
+                    currentDate.setDate(startDate.getDate() + i);
+                    const dateString = currentDate.toISOString().split('T')[0];
+                    weekDates.push(dateString);
+
+                    const tabBtn = document.createElement('button');
+                    tabBtn.className = 'tab-btn flex-1 p-2 text-sm font-medium text-gray-500 bg-gray-100 hover:bg-gray-200 rounded-t-lg';
+                    tabBtn.textContent = days[i];
+                    tabBtn.dataset.date = dateString;
+                    if (i === 0) tabBtn.classList.add('active');
+                    dayTabsContainer.appendChild(tabBtn);
+
+                    const selectorDiv = document.createElement('div');
+                    selectorDiv.id = `selector-${dateString}`;
+                    selectorDiv.className = 'tab-content space-y-2 max-h-60 overflow-y-auto p-1';
+                    if (i === 0) selectorDiv.classList.add('active');
+                    
+                    if (masterStaff.length > 0) {
+                        masterStaff.forEach(staff => {
+                            const uniqueName = `status-${dateString}-${staff.name.replace(/\s/g, '_')}`;
+                            selectorDiv.innerHTML += `
+                                <div class="flex items-center justify-between p-2 rounded-lg hover:bg-gray-100">
+                                    <span class="text-gray-700">${staff.name}</span>
+                                    <div class="status-radio-group flex space-x-2">
+                                        <input type="radio" id="${uniqueName}-present" name="${uniqueName}" value="present" data-staff-name="${staff.name}">
+                                        <label for="${uniqueName}-present">出</label>
+                                        <input type="radio" id="${uniqueName}-absent" name="${uniqueName}" value="absent" data-staff-name="${staff.name}">
+                                        <label for="${uniqueName}-absent">欠</label>
+                                    </div>
+                                </div>`;
+                        });
+                    } else {
+                        selectorDiv.innerHTML = '<p class="text-gray-400 text-sm">メンバー管理でメンバーを追加してください。</p>';
+                    }
+                    attendanceSelectorContainer.appendChild(selectorDiv);
+                }
+
+                dayTabsContainer.querySelectorAll('.tab-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        dayTabsContainer.querySelector('.active').classList.remove('active');
+                        e.target.classList.add('active');
+                        attendanceSelectorContainer.querySelector('.active').classList.remove('active');
+                        document.getElementById(`selector-${e.target.dataset.date}`).classList.add('active');
+                    });
+                });
+            };
+
+            const assignWeekLocations = () => {
+                weeklyAttendance = {};
+                weekDates.forEach(date => {
+                    const present = Array.from(document.querySelectorAll(`#selector-${date} input[value="present"]:checked`)).map(rb => rb.dataset.staffName);
+                    const absent = Array.from(document.querySelectorAll(`#selector-${date} input[value="absent"]:checked`)).map(rb => rb.dataset.staffName);
+                    weeklyAttendance[date] = { present, absent };
+                });
+
+                if (Object.values(weeklyAttendance).every(day => day.present.length === 0 && day.absent.length === 0)) {
+                    showMessage('出勤・欠勤が一人も選択されていません。');
+                    return;
+                }
+
+                weeklyAssignments = {};
+                const staffWeeklyStats = {};
+                masterStaff.forEach(s => { staffWeeklyStats[s.name] = { total: 0, locations: {} }; });
+
+                weekDates.forEach(date => {
+                    let staffOnDutyToday = weeklyAttendance[date].present || [];
+                    let todaysAssignments = {};
+                    locationDisplayOrder.forEach(loc => { todaysAssignments[loc] = []; });
+                    todaysAssignments['unassigned'] = [];
+                    
+                    prioritySlots.forEach(slotLocation => {
+                        let candidates = staffOnDutyToday.filter(name => {
+                            const isAlreadyAssignedToday = Object.values(todaysAssignments).flat().some(s => s.name === name);
+                            const canWorkHere = masterStaff.find(s => s.name === name)?.locations.includes(slotLocation);
+                            return !isAlreadyAssignedToday && canWorkHere;
+                        });
+
+                        if (candidates.length === 0) return;
+
+                        candidates.sort((a, b) => {
+                            const statsA = staffWeeklyStats[a];
+                            const statsB = staffWeeklyStats[b];
+                            if (statsA.total !== statsB.total) return statsA.total - statsB.total;
+                            const locCountA = statsA.locations[slotLocation] || 0;
+                            const locCountB = statsB.locations[slotLocation] || 0;
+                            if (locCountA !== locCountB) return locCountA - locCountB;
+                            return Math.random() - 0.5;
+                        });
+
+                        const bestCandidate = candidates[0];
+                        todaysAssignments[slotLocation].push({ name: bestCandidate, trainee: false });
+
+                        staffWeeklyStats[bestCandidate].total++;
+                        staffWeeklyStats[bestCandidate].locations[slotLocation] = (staffWeeklyStats[bestCandidate].locations[slotLocation] || 0) + 1;
+                    });
+                    
+                    const assignedToday = new Set(Object.values(todaysAssignments).flat().map(s => s.name));
+                    todaysAssignments['unassigned'] = staffOnDutyToday.filter(name => !assignedToday.has(name)).map(name => ({ name, trainee: false }));
+
+                    weeklyAssignments[date] = todaysAssignments;
+                });
+
+                displayWeeklyResults();
+            };
+
+            const displayWeeklyResults = () => {
+                resultContainer.innerHTML = '';
+                resultPlaceholder.classList.add('hidden');
+                const days = ['月', '火', '水', '木', '金'];
+
+                weekDates.forEach((date, dayIndex) => {
+                    const dayResultContainer = document.createElement('div');
+                    dayResultContainer.className = 'bg-white p-6 rounded-xl shadow-lg';
+                    
+                    const dateObj = new Date(date);
+                    const dateTitle = `${dateObj.getMonth() + 1}/${dateObj.getDate()} (${days[dayIndex]})`;
+                    
+                    let resultHtml = `<h3 class="text-xl font-bold text-indigo-700 mb-4 border-b pb-2">${dateTitle}</h3>`;
+                    resultHtml += `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4" data-date="${date}">`;
+                    
+                    const todaysAssignments = weeklyAssignments[date] || {};
+                    const unassigned = todaysAssignments.unassigned || [];
+                    const absent = (weeklyAttendance[date] || {}).absent || [];
+
+                    locationDisplayOrder.forEach(name => {
+                        const assignedStaff = todaysAssignments[name] || [];
+                        let staffHtml = assignedStaff.map(s => {
+                            const displayText = s.trainee ? `<span class="text-orange-600">${s.name} (研修)</span>` : s.name;
+                            return `<li class="draggable-item bg-white p-2 rounded shadow-sm border" data-name="${s.name}">${displayText}</li>`
+                        }).join('');
+                        resultHtml += `<div class="location-card bg-blue-50 border border-blue-200 p-4 rounded-lg shadow-sm drop-zone" data-location-type="location" data-location-name="${name}"><h4 class="text-md font-bold text-blue-800 mb-2">${name}</h4><ul class="list-none space-y-2 min-h-[2rem]">${staffHtml}</ul></div>`;
+                    });
+
+                    if (unassigned.length > 0) {
+                        let staffHtml = unassigned.map(s => `<li class="draggable-item bg-white p-2 rounded shadow-sm border" data-name="${s.name}">${s.name}</li>`).join('');
+                        resultHtml += `<div class="location-card bg-red-50 border border-red-200 p-4 rounded-lg shadow-sm drop-zone" data-location-type="unassigned" data-location-name="unassigned"><h4 class="text-md font-bold text-red-800 mb-2">待機者 (未配置)</h4><ul class="list-none space-y-2 min-h-[2rem]">${staffHtml}</ul></div>`;
+                    }
+                    if (absent.length > 0) {
+                        let staffHtml = absent.map(sName => `<li class="text-orange-800">${sName}</li>`).join('');
+                        resultHtml += `<div class="location-card bg-orange-50 border border-orange-200 p-4 rounded-lg shadow-sm"><h4 class="text-md font-bold text-orange-800 mb-2">欠勤者</h4><ul class="list-disc list-inside space-y-1">${staffHtml}</ul></div>`;
+                    }
+
+                    resultHtml += '</div>';
+                    dayResultContainer.innerHTML = resultHtml;
+                    resultContainer.appendChild(dayResultContainer);
+                });
+
+                addDragAndDropToResults();
+                clearBtn.classList.remove('hidden');
+                if (Object.keys(weeklyAssignments).length > 0) {
+                    showMessage('割り振りが完了しました！', false);
+                }
+            };
+
+            const openTraineeModal = (dragInfo, toLocation) => {
+                const traineeModalMessage = document.getElementById('trainee-modal-message');
+                const yesBtn = document.getElementById('trainee-modal-yes-btn');
+                const noBtn = document.getElementById('trainee-modal-no-btn');
+
+                traineeModalMessage.textContent = `「${dragInfo.name}」さんは「${toLocation}」で勤務できません。研修生として配置しますか？`;
+                traineeModal.style.display = 'flex';
+
+                return new Promise((resolve) => {
+                    const close = (result) => {
+                        traineeModal.style.display = 'none';
+                        yesBtn.onclick = null;
+                        noBtn.onclick = null;
+                        traineeModal.querySelector('.modal-backdrop').onclick = null;
+                        resolve(result);
+                    };
+                    yesBtn.onclick = () => close(true);
+                    noBtn.onclick = () => close(false);
+                    traineeModal.querySelector('.modal-backdrop').onclick = () => close(false);
+                });
+            };
+            
+            // --- 結果表示欄のドラッグ＆ドロップ処理（SortableJS版） ---
+            const addDragAndDropToResults = () => {
+                resultContainer.querySelectorAll('[data-date]').forEach(dayContainer => {
+                    const date = dayContainer.dataset.date;
+                    const dropZones = dayContainer.querySelectorAll('.drop-zone ul');
+                    
+                    dropZones.forEach(list => {
+                        new Sortable(list, {
+                            group: `assignments-${date}`, // 日付ごとにグループを分ける
+                            animation: 150,
+                            onAdd: async (evt) => {
+                                const itemName = evt.item.dataset.name;
+                                const toList = evt.to;
+                                const fromList = evt.from;
+                                
+                                const toZone = toList.closest('.drop-zone');
+                                const fromZone = fromList.closest('.drop-zone');
+                                
+                                const toLocation = toZone.dataset.locationName;
+                                const fromLocation = fromZone.dataset.locationName;
+                                const toType = toZone.dataset.locationType;
+
+                                // --- 研修生チェック ---
+                                let isTrainee = false;
+                                const staffData = masterStaff.find(s => s.name === itemName);
+                                if (toType === 'location' && !staffData.locations.includes(toLocation)) {
+                                    const confirmTrainee = await openTraineeModal({ name: itemName }, toLocation);
+                                    if (confirmTrainee) {
+                                        isTrainee = true;
+                                    } else {
+                                        // 移動をキャンセルして元のリストに戻す
+                                        fromList.appendChild(evt.item);
+                                        return;
+                                    }
+                                }
+
+                                // --- ★修正点：定員チェック ---
+                                // 研修生ではない場合のみ、定員チェックを行う
+                                if (toType === 'location' && !isTrainee) {
+                                    const capacity = prioritySlots.filter(slot => slot === toLocation).length;
+                                    const currentAssignments = (weeklyAssignments[date][toLocation] || []);
+                                    // 注意：移動元のリストからはまだ削除されていないので、移動先リストの現在の人数で比較する
+                                    if (currentAssignments.length >= capacity) {
+                                        showMessage(`「${toLocation}」は定員(${capacity}名)です。研修生としてのみ追加できます。`, true);
+                                        // 移動をキャンセルして元のリストに戻す
+                                        fromList.appendChild(evt.item);
+                                        return;
+                                    }
+                                }
+
+                                // --- データモデルを更新 ---
+                                // 1. 元の場所から削除
+                                const fromAssignments = weeklyAssignments[date][fromLocation];
+                                const staffIndex = fromAssignments.findIndex(s => s.name === itemName);
+                                if (staffIndex > -1) fromAssignments.splice(staffIndex, 1);
+                                
+                                // 2. 新しい場所に追加
+                                if (!weeklyAssignments[date][toLocation]) weeklyAssignments[date][toLocation] = [];
+                                weeklyAssignments[date][toLocation].splice(evt.newIndex, 0, { name: itemName, trainee: isTrainee });
+
+                                // --- UIをデータモデルに基づいて再描画 ---
+                                // これにより、DOMの状態とデータの状態が常に一致する
+                                displayWeeklyResults();
+                            }
+                        });
+                    });
+                });
+            };
+
+            const clearResults = () => {
+                resultContainer.innerHTML = '';
+                resultPlaceholder.classList.remove('hidden');
+                clearBtn.classList.add('hidden');
+                document.querySelectorAll('#attendance-selector-container input[type="radio"]:checked').forEach(rb => rb.checked = false);
+                weeklyAssignments = {};
+                weeklyAttendance = {};
+                showMessage('結果をクリアしました。', false);
+            };
+
+            init();
+        });
+    </script>
+</body>
+</html>
